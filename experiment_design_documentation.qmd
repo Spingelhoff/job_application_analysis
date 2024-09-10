@@ -1,0 +1,647 @@
+---
+title: "Application Experiment Analysis Endpoints"
+execute: 
+  warning: false
+  echo: false
+format: 
+  pdf
+---
+## Summary
+
+### Outline
+
+-   Goal of this project is to allow the capturing of data in the job application process to generate actionable insights for the applicant
+-   The medium of presentation will be a dashboard featuring KPIs and statistical models
+-   Models will be used to give concrete estimation of a testable hypothesis (i.e. for A/B testing of resumes)
+-   3 models proposed:
+-   Poisson regression of job portfolio website views
+-   Logistic regression of positive contact (i.e. not a rejection) after application
+-   Kaplan-Meier models on unemployment survivorship
+-   Data for poisson model should only be taken as long as applications are being actively sent out
+-   Data for logistic and Kaplan-Meier models can be obtained after application period
+
+### Experimental Guidelines
+
+-   To differentiate website views coming from different applications, UTM labels will be appended on website links attached to each resume  
+-   Applications should be sent out at a constant rate
+-   Try to keep job specifications as consistent as possible (e.g. only jobs that you are qualified for)
+-   Recommended to have a negative control for baseline engagement
+
+## A/B Testing Website Views
+
+### Causally Modeling A/B Testing
+
+```{r}
+library(ggdag)
+
+traffic_causal_model <- dagify(
+  engagement ~ appeal + time,
+  appeal ~ time + application,
+  labels = c(
+    engagement = "engagement",
+    appeal = "appeal",
+    application = "application",
+    time = "time"
+  ),
+  coords = list(
+    x = c(application = 0, engagement = 3, 
+          appeal = 1, time = 2),
+    y = c(application = 1, engagement = 1, 
+          appeal = 1, time = 2)
+  )
+)
+
+ggdag(
+  traffic_causal_model,
+  use_labels = "label",
+  text = FALSE
+) +
+  theme_dag()
+```
+
+-   Time frame of comparison is short and thus economic factors are unlikely to change over course of testing removing the need to control for economic factors
+
+### Simulation Study
+
+-   Simulation of study ran for differing days, replicates and assumed effect size
+-   Statistical power was defined as proportion of regression results with p-value less than 0.1
+-   Target acceptable statistical power is 80% 
+-   Different model specifications were tested to determine best estimator of true effect
+-   Poisson without fixed effects
+-   Poisson with fixed effects on date and replicates
+-   OLS with fixed effects on date and replicates
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(gt)
+library(fixest)
+
+model_sampling_distribution <- function(sample, n, r, effect) {
+  create_data <- function(n, r, effect) {
+    data.frame(
+    treatment = rep(c(rep("A", r), rep("B", r)), n),
+    replicate = rep(1:r, n)
+    ) |>
+    group_by(
+      treatment,
+      replicate
+    ) |>
+    mutate(
+      day = 1:n,
+      views = case_when(
+        treatment == "A" ~ rpois(n, 5),
+        treatment == "B" ~ rpois(n, 5 * (1 + effect)),
+        TRUE ~ NA
+      )
+    )
+  }
+
+  data <- create_data(n, r, effect)
+  
+  model_data <- function(data, sample, model) {
+    model_glm <- glm(
+      views ~ treatment, family = "poisson", 
+      data = data
+    ) |> 
+      coeftable() |>
+      data.frame() |>
+      rownames_to_column("effect") |>
+      mutate(model = "poisson-base", sample = sample) |>
+      rename(
+        "coef" = Estimate,
+        se = "Std..Error",
+        p = "Pr...z.."
+      )
+    
+    model_pois <- fepois(
+      views ~ treatment | day + replicate , 
+      data = data
+    ) |>
+      coeftable() |>
+      data.frame() |>
+      rownames_to_column("effect") |>
+      mutate(model = "poisson-fixed", sample = sample) |>
+      rename(
+        "coef" = Estimate,
+        se = "Std..Error",
+        p = "Pr...z.."
+      )
+
+    model_ols <- feols(
+      log(views) ~ treatment| day + replicate, 
+      data = data
+    ) |>
+      coeftable() |>
+      data.frame() |>
+      rownames_to_column("effect") |>
+      mutate(model = "ols", sample = sample) |>
+      rename(
+        "coef" = Estimate,
+        se = "Std..Error",
+        p = 5
+      )
+
+    test_data <- bind_rows(
+      model_glm,
+      model_pois,
+      model_ols
+    ) |>
+      filter(
+        effect == "treatmentB"
+      )
+  }
+  
+  model_data(data = data, sample = sample)
+}
+
+modeling_data <- lapply(
+  1:1000,
+  model_sampling_distribution,
+  n = 30,
+  r = 2,
+  effect = 0.1
+) |>
+  bind_rows()
+
+modeling_data_summaries <- modeling_data |>
+  group_by(model) |>
+  summarize(
+    coef_mean = mean(coef),
+    coef_sd = sd(coef),
+    se_mean = mean(se),
+    se_sd = sd(se),
+    power = length(p[p <= 0.1])/n()
+  ) |>
+  mutate(
+    n = 30,
+    r = 2,
+    effect = 0.1,
+    lambda = 5
+  ) |>
+  relocate(
+    n,
+    r,
+    effect,
+    lambda
+  )
+
+modeling_data2 <- lapply(
+  1:1000,
+  model_sampling_distribution,
+  n = 30,
+  r = 3,
+  effect = 0.1
+) |>
+  bind_rows()
+
+modeling_data_summaries2 <- modeling_data2 |>
+  group_by(model) |>
+  summarize(
+    coef_mean = mean(coef),
+    coef_sd = sd(coef),
+    se_mean = mean(se),
+    se_sd = sd(se),
+    power = length(p[p <= 0.1])/n()
+  ) |>
+  mutate(
+    n = 30,
+    r = 3,
+    effect = 0.1,
+    lambda = 5
+  ) |>
+  relocate(
+    n,
+    r,
+    effect,
+    lambda
+  )
+
+modeling_data3 <- lapply(
+  1:1000,
+  model_sampling_distribution,
+  n = 45,
+  r = 2,
+  effect = 0.1
+) |>
+  bind_rows()
+
+modeling_data_summaries3 <- modeling_data3 |>
+  group_by(model) |>
+  summarize(
+    coef_mean = mean(coef),
+    coef_sd = sd(coef),
+    se_mean = mean(se),
+    se_sd = sd(se),
+    power = length(p[p <= 0.1])/n()
+  ) |>
+  mutate(
+    n = 45,
+    r = 2,
+    effect = 0.1,
+    lambda = 5
+  ) |>
+  relocate(
+    n,
+    r,
+    effect,
+    lambda
+  )
+
+modeling_data4 <- lapply(
+  1:1000,
+  model_sampling_distribution,
+  n = 45,
+  r = 3,
+  effect = 0.1
+) |>
+  bind_rows()
+
+modeling_data_summaries4 <- modeling_data4 |>
+  group_by(model) |>
+  summarize(
+    coef_mean = mean(coef),
+    coef_sd = sd(coef),
+    se_mean = mean(se),
+    se_sd = sd(se),
+    power = length(p[p <= 0.1])/n()
+  ) |>
+    mutate(
+    n = 45,
+    r = 3,
+    effect = 0.1,
+    lambda = 5
+  ) |>
+  relocate(
+    n,
+    r,
+    effect,
+    lambda
+  )
+
+modeling_data5 <- lapply(
+  1:1000,
+  model_sampling_distribution,
+  n = 30,
+  r = 2,
+  effect = 0.2
+) |>
+  bind_rows()
+
+modeling_data_summaries5 <- modeling_data5 |>
+  group_by(model) |>
+  summarize(
+    coef_mean = mean(coef),
+    coef_sd = sd(coef),
+    se_mean = mean(se),
+    se_sd = sd(se),
+    power = length(p[p <= 0.1])/n()
+  ) |>
+    mutate(
+    n = 30,
+    r = 2,
+    effect = 0.2,
+    lambda = 5
+  ) |>
+  relocate(
+    n,
+    r,
+    effect,
+    lambda
+  )
+
+modeling_data6 <- lapply(
+  1:1000,
+  model_sampling_distribution,
+  n = 30,
+  r = 3,
+  effect = 0.2
+) |>
+  bind_rows()
+
+modeling_data_summaries6 <- modeling_data6 |>
+  group_by(model) |>
+  summarize(
+    coef_mean = mean(coef),
+    coef_sd = sd(coef),
+    se_mean = mean(se),
+    se_sd = sd(se),
+    power = length(p[p <= 0.1])/n()
+  ) |>
+    mutate(
+    n = 30,
+    r = 3,
+    effect = 0.2,
+    lambda = 5
+  ) |>
+  relocate(
+    n,
+    r,
+    effect,
+    lambda
+  )
+
+model_sampling_distribution <- function(sample, n, r, effect) {
+  create_data <- function(n, r, effect) {
+    data.frame(
+    treatment = rep(c(rep("A", r), rep("B", r)), n),
+    replicate = rep(1:r, n)
+    ) |>
+    group_by(
+      treatment,
+      replicate
+    ) |>
+    mutate(
+      day = 1:n,
+      views = case_when(
+        treatment == "A" ~ rpois(n, 3),
+        treatment == "B" ~ rpois(n, 3 * (1 + effect)),
+        TRUE ~ NA
+      )
+    )
+  }
+
+  data <- create_data(n, r, effect)
+  
+  model_data <- function(data, sample, model) {
+    model_glm <- glm(
+      views ~ treatment, family = "poisson", 
+      data = data
+    ) |> 
+      coeftable() |>
+      data.frame() |>
+      rownames_to_column("effect") |>
+      mutate(model = "poisson-base", sample = sample) |>
+      rename(
+        "coef" = Estimate,
+        se = "Std..Error",
+        p = "Pr...z.."
+      )
+    
+    model_pois <- fepois(
+      views ~ treatment | day + replicate , 
+      data = data
+    ) |>
+      coeftable() |>
+      data.frame() |>
+      rownames_to_column("effect") |>
+      mutate(model = "poisson-fixed", sample = sample) |>
+      rename(
+        "coef" = Estimate,
+        se = "Std..Error",
+        p = "Pr...z.."
+      )
+
+    model_ols <- feols(
+      log(views) ~ treatment| day + replicate, 
+      data = data
+    ) |>
+      coeftable() |>
+      data.frame() |>
+      rownames_to_column("effect") |>
+      mutate(model = "ols", sample = sample) |>
+      rename(
+        "coef" = Estimate,
+        se = "Std..Error",
+        p = 5
+      )
+
+    test_data <- bind_rows(
+      model_glm,
+      model_pois,
+      model_ols
+    ) |>
+      filter(
+        effect == "treatmentB"
+      )
+  }
+  
+  model_data(data = data, sample = sample)
+}
+
+modeling_data7 <- lapply(
+  1:1000,
+  model_sampling_distribution,
+  n = 30,
+  r = 3,
+  effect = 0.2
+) |>
+  bind_rows()
+
+modeling_data_summaries7 <- modeling_data7 |>
+  group_by(model) |>
+  summarize(
+    coef_mean = mean(coef),
+    coef_sd = sd(coef),
+    se_mean = mean(se),
+    se_sd = sd(se),
+    power = length(p[p <= 0.1])/n()
+  ) |>
+    mutate(
+    n = 30,
+    r = 3,
+    effect = 0.2,
+    lambda = 3
+  ) |>
+  relocate(
+    n,
+    r,
+    effect,
+    lambda
+  )
+
+all_modeling_data_summaries <- list(
+  modeling_data_summaries,
+  modeling_data_summaries2,
+  modeling_data_summaries3,
+  modeling_data_summaries4,
+  modeling_data_summaries5,
+  modeling_data_summaries6,
+  modeling_data_summaries7
+) |>
+  bind_rows() |>
+  gt()
+
+all_modeling_data_summaries
+```
+
+-   With an estimated effect size of 0.1 between applications tested, 45 days at 3 replicates is minimally required for statistical power of 80%
+-   With an estimated effect size of 0.2, 30 days at 2 replicates is sufficient for ~75% power though it is not the ideal of 80%
+-   Assumed rate needs to be about 5 per day for these power estimates to be valid - lower seems to greatly reduce estimates (likely because of the overabundance of zeros when fixing on date)
+-   May have more power to look at page views or total clicks or total events
+-   E.g. Assume you make it past screening filters to a real person at 50% of the time. Assume then this person looks at your page. There is an average minimum of 4 events (landing -> about -> scroll -> projects) (low interest). There is a average of 7 clicks (landing -> about -> scroll -> project -> demo -> article -> scroll) (medium interest). There is an average maximum of 12 events (landing -> about -> scroll -> project -> demo -> article -> scroll -> project2 -> demo2 -> article2 -> scroll) (high interest). Assume even spread of interest (i.e. ~33% each) There may also be return visits based on strong interest. Let's assume 4 page views for repeat visits. Assuming return interest to be about 50% of interest...will give an estimate 4.833 (((4+7+12)/3 + 4*0.5)/2). This is relatively idealized.
+-   Could increase replicates to 3 which gives a greater than 80% of power
+-   3 replicates achieves a power rate of 70% with a rate of 3 per day
+-   Suggested to use 3 replicates to be safe
+-   OLS tends to perform better at estimating the true effect but with lower power and incoherent errors (e.g. predicted views lower than 0)
+
+### Conclusion
+
+-   Predicted effect size should be considered prior to starting experiment
+-   Experiment length should not be greater than 30 days
+-   Lower number of replicates is preferable
+-   It is recommended that only predicted effect sizes of 20% or greater should be tested
+
+## A/B Testing Contact
+
+### Causal Model
+
+```{r}
+contact_causal_model <- dagify(
+  contact ~ appeal,
+  appeal ~ application,
+  labels = c(
+    contact = "contact",
+    appeal = "appeal",
+    application = "application"
+  ),
+  coords = list(
+    x = c(application = 0, contact = 3, appeal = 1),
+    y = c(application = 1, contact = 1, appeal = 1)
+  )
+)
+
+ggdag(
+  contact_causal_model,
+  use_labels = "label",
+  text = FALSE
+) +
+  theme_dag()
+```
+
+-   We will make the assumption that date of application is irrelevant (i.e. we can pretend that all applications were sent out on the same day)
+
+### Simulation Study
+
+```{r}
+model_sampling_distribution <- function(sample, n, r, effect) {
+  create_data <- function(n, r, effect) {
+    data.frame(
+    treatment = rep(c(rep("A", r), rep("B", r)), n),
+    replicate = rep(1:r, n)
+    ) |>
+    group_by(
+      treatment,
+      replicate
+    ) |>
+    mutate(
+      application = 1:n,
+      contact = case_when(
+        treatment == "A" ~ rbinom(n, 1, 0.1),
+        treatment == "B" ~ rbinom(n, 1, 0.1 + effect),
+        TRUE ~ NA
+      )
+    )
+  }
+
+  data <- create_data(n, r, effect)
+  
+  model_data <- function(data, sample, model) {
+    model_logistic <- feglm(
+      contact ~ treatment | replicate, family = "binomial", 
+      data = data
+    ) |> 
+      coeftable() |>
+      data.frame() |>
+      rownames_to_column("effect") |>
+      rename(
+        "coef" = Estimate,
+        se = "Std..Error",
+        p = "Pr...z.."
+      ) |>
+      filter(
+        effect == "treatmentB"
+      )
+    
+    model_logistic
+  }
+  
+  model_data(data = data, sample = sample)
+}
+
+modeling_data <- lapply(
+  1:1000,
+  model_sampling_distribution,
+  n = 30,
+  r = 2,
+  effect = 0.2
+) |>
+  bind_rows()
+
+modeling_data_summaries <- modeling_data |>
+  summarize(
+    coef_mean = mean(coef),
+    coef_sd = sd(coef),
+    se_mean = mean(se),
+    se_sd = sd(se),
+    power = length(p[p <= 0.1])/n()
+  ) |>
+    mutate(
+    n = 30,
+    r = 2,
+    effect = 0.2,
+    model = "logistic"
+  ) |>
+  relocate(
+    n,
+    r,
+    effect,
+    model
+  )
+
+modeling_data2 <- lapply(
+  1:1000,
+  model_sampling_distribution,
+  n = 30,
+  r = 3,
+  effect = 0.2
+) |>
+  bind_rows()
+
+modeling_data_summaries2 <- modeling_data2 |>
+  summarize(
+    coef_mean = mean(coef),
+    coef_sd = sd(coef),
+    se_mean = mean(se),
+    se_sd = sd(se),
+    power = length(p[p <= 0.1])/n()
+  ) |>
+    mutate(
+    n = 30,
+    r = 3,
+    effect = 0.1,
+    model = "logistic"
+  ) |>
+  relocate(
+    n,
+    r,
+    effect,
+    model
+  )
+
+all_modeling_data_summaries <- list(
+  modeling_data_summaries,
+  modeling_data_summaries2
+) |>
+  bind_rows() |>
+  gt()
+
+all_modeling_data_summaries
+```
+
+-   30 days at 2 replicates is sufficient for a minimal statistical power of 80%
+
+## Interview Survivorship
+
+-   KP curves for each treatment with output being contact/failure
+-   A log rank test can be used to test for differences in curves
+-   Establishing differences in effect sizes of applications is not required for this model’s usefulness
+
+## KPIs
+
+-   Total applications sent
+-   Total days since experiment start
+-   Website views per job application
+-   Website views per interview
+-   Interviews per job application

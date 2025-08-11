@@ -340,17 +340,17 @@ server <- function(input, output) {
     removeModal()
   })
 
-  modeling_data <- reactive({merge(
-    experiment_data(),
-    event_data(),
-    by.x = c("Application.Date", "Condition", "Replicate"),
-    by.y = c("Date", "Condition", "Replicate")
-  )})
+#  modeling_data <- reactive({merge(
+#    experiment_data(),
+#    event_data(),
+#    by.x = c("Application.Date", "Condition", "Replicate"),
+#    by.y = c("Date", "Condition", "Replicate")
+#  )})
 
   poisson_model <- reactive({glm(
-    Events ~ Condition + Application.Date + Replicate,
+    Events ~ Condition + Date + Replicate,
     family = poisson(),
-    data = modeling_data()
+    data = event_data()
   )})
 
   poisson_summary <- reactive({as.data.frame(summary(poisson_model())$coefficients)})
@@ -358,7 +358,7 @@ server <- function(input, output) {
   logistic_model <- reactive({glm(
     Interview ~ Condition + Replicate,
     family = "binomial",
-    data = modeling_data()
+    data = experiment_data()
   )})
 
   logistic_summary <- reactive({summary(logistic_model())$coefficients})
@@ -366,7 +366,7 @@ server <- function(input, output) {
   logistic_model2 <- reactive({glm(
     Response ~ Condition + Replicate,
     family = "binomial",
-    data = modeling_data()
+    data = experiment_data()
   )})
 
   logistic_summary2 <- reactive({summary(logistic_model2())$coefficients})
@@ -376,7 +376,7 @@ server <- function(input, output) {
       time = as.Date(modeling_data()$Response.Date, format = "%d/%m/%Y") -
              as.Date(modeling_data()$Application.Date, format = "%d/%m/%Y"),
       event = modeling_data()$Response
-    ) ~ modeling_data()$Condition
+    ) ~ experiment_data()$Condition
   )})
 
   km_diff <- reactive({survdiff(
@@ -384,7 +384,7 @@ server <- function(input, output) {
       time = as.Date(modeling_data()$Response.Date, format = "%d/%m/%Y") -
              as.Date(modeling_data()$Application.Date, format = "%d/%m/%Y"),
       event = modeling_data()$Response
-    ) ~ modeling_data()$Condition
+    ) ~ experiment_data()$Condition
   )})
 
   output$applications_sent <- renderText({

@@ -456,9 +456,9 @@ server <- function(input, output) {
   )})
 
   poisson_model <- reactive({glm(
-    Events ~ Condition + Application.Date + Replicate,
+    Events ~ Condition + Date + Replicate,
     family = poisson(),
-    data = modeling_data()
+    data = event_data()
   )})
 
   poisson_summary <- reactive({as.data.frame(summary(poisson_model())$coefficients)})
@@ -466,7 +466,7 @@ server <- function(input, output) {
   logistic_model <- reactive({glm(
     Interview ~ Condition + Replicate,
     family = "binomial",
-    data = modeling_data()
+    data = experiment_data()
   )})
 
   logistic_summary <- reactive({summary(logistic_model())$coefficients})
@@ -474,25 +474,25 @@ server <- function(input, output) {
   logistic_model2 <- reactive({glm(
     Response ~ Condition + Replicate,
     family = "binomial",
-    data = modeling_data()
+    data = experiment_data()
   )})
 
   logistic_summary2 <- reactive({summary(logistic_model2())$coefficients})
 
   km_model <- reactive({survfit(
     Surv(
-      time = as.Date(modeling_data()$Response.Date, format = "%d/%m/%Y") -
-        as.Date(modeling_data()$Application.Date, format = "%d/%m/%Y"),
-      event = modeling_data()$Response
-    ) ~ modeling_data()$Condition
+      time = as.Date(experiment_data()$Response.Date, format = "%d/%m/%Y") -
+        as.Date(experiment_data()$Application.Date, format = "%d/%m/%Y"),
+      event = experiment_data()$Response
+    ) ~ experiment_data()$Condition
   )})
 
   km_diff <- reactive({survdiff(
     Surv(
-      time = as.Date(modeling_data()$Response.Date, format = "%d/%m/%Y") -
-        as.Date(modeling_data()$Application.Date, format = "%d/%m/%Y"),
-      event = modeling_data()$Response
-    ) ~ modeling_data()$Condition
+      time = as.Date(experiment_data()$Response.Date, format = "%d/%m/%Y") -
+        as.Date(experiment_data()$Application.Date, format = "%d/%m/%Y"),
+      event = experiment_data()$Response
+    ) ~ experiment_data()$Condition
   )})
 
   output$applications_sent <- renderText({

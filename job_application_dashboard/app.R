@@ -373,17 +373,17 @@ server <- function(input, output) {
 
   km_model <- reactive({survfit(
     Surv(
-      time = as.Date(modeling_data()$Response.Date, format = "%d/%m/%Y") -
-             as.Date(modeling_data()$Application.Date, format = "%d/%m/%Y"),
-      event = modeling_data()$Response
+      time = as.Date(experiment_data()$Response.Date, format = "%d/%m/%Y") -
+             as.Date(experiment_data()$Application.Date, format = "%d/%m/%Y"),
+      event = experiment_data()$Response
     ) ~ experiment_data()$Condition
   )})
 
   km_diff <- reactive({survdiff(
     Surv(
-      time = as.Date(modeling_data()$Response.Date, format = "%d/%m/%Y") -
-             as.Date(modeling_data()$Application.Date, format = "%d/%m/%Y"),
-      event = modeling_data()$Response
+      time = as.Date(experiment_data()$Response.Date, format = "%d/%m/%Y") -
+             as.Date(experiment_data()$Application.Date, format = "%d/%m/%Y"),
+      event = experiment_data()$Response
     ) ~ experiment_data()$Condition
   )})
 
